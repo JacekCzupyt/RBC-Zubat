@@ -43,7 +43,8 @@ RC_DISABLE_PBAR = os.getenv('RC_DISABLE_PBAR', 'false').lower() == 'true'  # Fla
 WAIT_LOOP_RATE_LIMIT = 2  # minimum seconds spent looping in self.while_we_wait()
 
 # Parameters for switching to the emergency backup plan
-BOARD_SET_LIMIT = 1_000  # number of boards in set at which we stop processing and store for later
+# TODO: return to 1000
+BOARD_SET_LIMIT = 200_000  # number of boards in set at which we stop processing and store for later
 REPOPULATE_BOARD_SET_TARGET = 30  # number of boards at which we stop repopulating from stored states
 
 

@@ -16,3 +16,6 @@ test_cases
 score_cache.*
 *.prof
 endgame_tables/
+/game_logs/historical_games/
+/game_logs/historical_games_extended/
+/game_logs/historical_games_extended_backup/
