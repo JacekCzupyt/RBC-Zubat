@@ -24,9 +24,10 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 import random
 from collections import defaultdict
-from typing import List
+from typing import List, Optional, Tuple
 
 import chess.engine
+import numpy as np
 from reconchess import Square, Color
 from tqdm import tqdm
 
@@ -37,6 +38,7 @@ from strangefish.utilities import (
     sense_masked_bitboards,
     PASS,
 )
+from strangefish.utilities.chess_model_embedding import chess_model_embedding
 
 SCORE_ROUNDOFF = 1e-5
 SENSE_SAMPLE_LIMIT = 2500
@@ -46,11 +48,13 @@ SCORE_SAMPLE_LIMIT = 250
 class OracleFish(StrangeFish):
 
     def __init__(
-        self,
+            self,
 
-        log_to_file=True,
-        game_id=None,
-        rc_disable_pbar=RC_DISABLE_PBAR
+            log_to_file=True,
+            game_id=None,
+            rc_disable_pbar=RC_DISABLE_PBAR,
+
+            uncertainty_model=None
     ):
         """
         Constructs an instance of the StrangeFish2 agent.
@@ -61,6 +65,16 @@ class OracleFish(StrangeFish):
         """
         super().__init__(log_to_file=log_to_file, game_id=game_id, rc_disable_pbar=rc_disable_pbar)
         self.engine = None
+        self.uncertainty_model = uncertainty_model
+
+        self.previous_requested_move = None
+        self.previous_move_piece_type = None
+        self.previous_taken_move = None
+        self.previous_move_capture = None
+        self.opponent_capture = None
+        self.sense_position = None
+
+        self.network_input_sequence = []
 
     def handle_game_start(self, color: Color, board: chess.Board, opponent_name: str):
         super().handle_game_start(color, board, opponent_name)
@@ -72,7 +86,9 @@ class OracleFish(StrangeFish):
         if len(self.boards) == 1:
             return None
 
-        return self.sense_min_states(sense_actions, moves, seconds_left)
+        self.sense_position = self.sense_min_states(sense_actions, moves, seconds_left)
+
+        return self.sense_position
 
     def sense_min_states(self, sense_actions: List[Square], moves: List[chess.Move], seconds_left: float):
         """Choose a sense square to minimize the expected board set size."""
@@ -122,13 +138,64 @@ class OracleFish(StrangeFish):
 
     def move_strategy(self, moves: List[chess.Move], seconds_left: float):
 
-        move_votes = defaultdict(int)
+        move_votes = defaultdict(float)
 
         for board in tqdm(self.boards, desc='Evaluating best moves for each board'):
             move = self._get_engine_move(next(iter(self.boards)))
             move_votes[move] += 1
 
-        return max(move_votes, key=move_votes.get)
+        if self.uncertainty_model:
+            inputs, uncertainties = self.measure_uncertainty(moves)
+
+            for i in range(len(moves)):
+                move_votes[moves[i]] += uncertainties[i]
+
+        move = max(move_votes, key=move_votes.get)
+
+        if self.uncertainty_model:
+            self.network_input_sequence += [inputs[moves.index(move)]]
+
+        return move
+
+    def handle_move_result(self, requested_move: Optional[chess.Move], taken_move: Optional[chess.Move],
+                           captured_opponent_piece: bool, capture_square: Optional[Square]):
+        self.previous_requested_move = requested_move
+        self.previous_move_piece_type = next(iter(self.boards)).piece_at(requested_move.from_square).piece_type
+        self.previous_taken_move = taken_move
+        self.previous_move_capture = capture_square
+
+        super().handle_move_result(requested_move, taken_move, captured_opponent_piece, capture_square)
+
+    def handle_opponent_move_result(self, captured_my_piece: bool, capture_square: Optional[Square]):
+        self.opponent_capture = capture_square
+        super().handle_opponent_move_result(captured_my_piece, capture_square)
+
+    def handle_sense_result(self, sense_result: List[Tuple[Square, Optional[chess.Piece]]]):
+        self.sense_result = sense_result
+
+        super().handle_sense_result(sense_result)
+
+    def measure_uncertainty(self, moves: List[chess.Move]):
+        # TODO: split next requested move from rest
+
+        inputs = [
+            chess_model_embedding(
+                self.color,
+                self.previous_requested_move,
+                self.previous_move_piece_type,
+                self.previous_taken_move,
+                self.previous_move_capture,
+                self.opponent_capture,
+                self.sense_position,
+                self.sense_result,
+                next(iter(self.boards)),
+                move
+            ) for move in moves]
+
+        results = np.array([self.uncertainty_model.predict(np.array(self.network_input_sequence + [input])) for input in inputs])
+
+        return inputs, results[:, -1]
+
 
     def _get_engine_move(self, board: chess.Board):
         # Capture the opponent's king if possible

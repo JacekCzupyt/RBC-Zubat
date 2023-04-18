@@ -17,14 +17,15 @@ def parse_position(board, color):
 def chess_model_embedding(
         color,
         previous_requested_move,
+        previous_move_piece_type,
         previous_move_result,
+        last_move_capture,
         opponent_capture,
         sense_position,
         sense_result,
-        owned_piece_positions,
+        owned_pieces,
         next_requested_move
 ):
-
     # 1 Color Layer
     color_layer = np.ones((1, 8, 8)) if color else np.zeros((1, 8, 8))
     # 1 Sense Location Layer
@@ -42,7 +43,7 @@ def chess_model_embedding(
 
     # 6 Layers for current state of owned pieces
     owned_piece_positions = np.array([
-        np.reshape([owned_piece_positions.pieces_mask(piece_type, color) >> i & 1 for i in range(64)],
+        np.reshape([owned_pieces.pieces_mask(piece_type, color) >> i & 1 for i in range(64)],
                    (8, 8))
         for piece_type in chess.PIECE_TYPES
     ])
@@ -65,22 +66,21 @@ def chess_model_embedding(
     if previous_requested_move is not None:
         if previous_requested_move is not None:
             # TODO
-            prev_piece_type = history.truth_board_before_move(prev_turn).piece_at(
-                previous_requested_move.from_square).piece_type
-            last_move_origin[chess.PIECE_TYPES.index(prev_piece_type)] = int_to_square(previous_requested_move.from_square)
+            last_move_origin[chess.PIECE_TYPES.index(previous_move_piece_type)] = int_to_square(
+                previous_requested_move.from_square)
             last_move_requested_destination = np.array([int_to_square(previous_requested_move.to_square)])
 
             if previous_requested_move.promotion not in [None, chess.QUEEN]:
                 under_promotions[
                     [chess.ROOK, chess.KNIGHT, chess.BISHOP].index(previous_requested_move.promotion)] = np.ones((8, 8))
 
-        if history.capture_square(prev_turn) is not None:
-            captured_square = [int_to_square(history.capture_square(prev_turn))]
+        if last_move_capture is not None:
+            captured_square = [int_to_square(last_move_capture)]
         if previous_move_result is not None:
             last_move_taken_destination = np.array([int_to_square(previous_move_result.to_square)])
 
     if next_requested_move is not None:
-        next_piece_type = owned_piece_positions.piece_at(next_requested_move.from_square).piece_type
+        next_piece_type = owned_pieces.piece_at(next_requested_move.from_square).piece_type
 
         # 6 Layers for next move origin - one for each piece type
         next_move_origin = np.array([
@@ -101,7 +101,7 @@ def chess_model_embedding(
         next_move_requested_destination = np.zeros((1, 8, 8))
         next_under_promotions = np.zeros((3, 8, 8))
 
-    return np.concatenate(
+    return np.transpose(np.concatenate(
         (color_layer,  # 0
          sense_location,  # 1
          sense_res,  # 2-7
@@ -116,4 +116,4 @@ def chess_model_embedding(
          next_move_requested_destination,  # 33
          next_under_promotions,  # 34-36
          )
-    )
+    ), (1, 2, 0))
