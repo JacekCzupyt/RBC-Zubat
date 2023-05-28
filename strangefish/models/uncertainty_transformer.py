@@ -1,6 +1,8 @@
 import numpy as np
 import tensorflow as tf
 
+from strangefish.models.model_training_utils import masked_squared_error
+
 keras = tf.keras
 
 
@@ -27,9 +29,6 @@ class TransformerBlock(keras.layers.Layer):
 
 
 def uncertainty_transformer_1(num_heads=2, ff_dim=64, dropout=0.1, weights_path=None):
-    def masked_squared_error(y_true, y_pred):
-        mask = tf.where(tf.not_equal(y_true, -1.0))
-        return tf.reduce_mean(tf.square(tf.gather(y_true, mask) - tf.gather(y_pred, mask)))
 
     input_dim = (None, 8, 8, 37)
 
@@ -47,7 +46,6 @@ def uncertainty_transformer_1(num_heads=2, ff_dim=64, dropout=0.1, weights_path=
 
     x = TransformerBlock(input_len, num_heads, ff_dim, dropout)(x)
 
-    x = keras.layers.GlobalAveragePooling1D()(x)
     x = keras.layers.Dropout(dropout)(x)
 
     x = keras.layers.Dense(units=64, activation='relu', name='fc')(x)
