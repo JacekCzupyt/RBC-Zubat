@@ -12,10 +12,11 @@
 DOCKER_BUILD_DIR='/vagrant'
 DOCKER_FILE_PATH='/vagrant/container/dockerfiles/tensorflow.Dockerfile'
 DOCKER_IMAGE_URI='jczupyt/zubat:latest'
-ENROOT_IMAGE_NAME='jczupyt-zubat-latest'
-OUTPUT_DIR_HOST='/home2/faculty/jczupyt/images/enroot'
+DOCKER_IMAGE_NAME='jczupyt-zubat-latest'
+OUTPUT_DIR_HOST='/home2/faculty/jczupyt/images/docker'
 OUTPUT_DIR_GUEST='/output'
-OUTPUT_FILENAME="${ENROOT_IMAGE_NAME}_$(date +'%Y-%m-%d_%H-%M-%S').sqsh"
+OUTPUT_FILENAME="${DOCKER_IMAGE_NAME}_$(date +'%Y-%m-%d_%H-%M-%S').tar"
+CONVERT_TO_ENROOT='false'
 
 set -e
 
@@ -26,12 +27,9 @@ env \
   OUTPUT_DIR_HOST="${OUTPUT_DIR_HOST}" \
   OUTPUT_DIR_GUEST="${OUTPUT_DIR_GUEST}" \
   OUTPUT_FILENAME="${OUTPUT_FILENAME}" \
-  CONVERT_TO_ENROOT='true' \
+  CONVERT_TO_ENROOT="${CONVERT_TO_ENROOT}" \
   vagrant up --provision
-echo "Provisioned virtual machine and exported docker image to enroot image: ${OUTPUT_DIR_HOST}/${OUTPUT_FILENAME}"
+echo "Provisioned virtual machine and docker image: ${OUTPUT_DIR_HOST}/${OUTPUT_FILENAME}"
 
 vagrant suspend
 echo "Suspended virtual machine"
-
-enroot create --force --name "${ENROOT_IMAGE_NAME}" "${OUTPUT_DIR_HOST}/${OUTPUT_FILENAME}"
-echo "Created new enroot image ${ENROOT_IMAGE_NAME} from ${OUTPUT_DIR_HOST}/${OUTPUT_FILENAME}"

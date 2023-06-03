@@ -1,4 +1,4 @@
-FROM nvcr.io/nvidia/tensorflow:23.04-tf2-py3
+FROM nvcr.io/nvidia/tensorflow:23.05-tf2-py3
 
 RUN mkdir /app
 COPY requirements.txt /app/requirements.txt

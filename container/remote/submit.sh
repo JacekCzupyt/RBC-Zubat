@@ -3,7 +3,7 @@
 #SBATCH --constraint=dgx
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=1
+#SBATCH --cpus-per-task=4
 #SBATCH --mem=2GB
 #SBATCH --time=0-1:00:00
 #SBATCH --partition=short

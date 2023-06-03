@@ -38,7 +38,7 @@ def uncertainty_transformer_1(num_heads=2, ff_dim=64, dropout=0.1, weights_path=
     # ---- Network model ----
     input_data = keras.layers.Input(name='input', shape=input_dim, dtype=dtype)
 
-    x = keras.layers.Masking(mask_value=-1)(input_data)
+    x = keras.layers.Masking(mask_value=-1.0)(input_data)
 
     input_len = np.product(input_dim[1:])
 
