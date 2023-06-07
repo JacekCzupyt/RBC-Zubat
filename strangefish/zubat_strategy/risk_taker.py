@@ -24,7 +24,6 @@ def get_high_risk_moves(
     start_time = time()
     for _ in tqdm(range(samples), desc="Sampling for gambles", unit="Samples", disable=rc_disable_pbar):
         try:
-            # TODO: add error handling for early mate
             board = fast_copy_board(random.choice(boards))
             move = random.choice(moves)
             for i in range(depth):
