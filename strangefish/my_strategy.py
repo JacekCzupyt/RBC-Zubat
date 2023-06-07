@@ -24,6 +24,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 import random
 from collections import defaultdict
+from time import time
 from typing import List, Optional, Tuple
 
 import chess.engine
@@ -36,9 +37,11 @@ from strangefish.utilities import (
     SEARCH_SPOTS,
     stockfish,
     sense_masked_bitboards,
-    PASS,
+    PASS, fast_copy_board, rbc_legal_move_requests, simulate_move, rbc_legal_moves,
 )
 from strangefish.utilities.chess_model_embedding import chess_model_embedding
+from strangefish.utilities.rbc_move_score import calculate_score
+from strangefish.zubat_strategy.risk_taker import get_high_risk_moves
 
 SCORE_ROUNDOFF = 1e-5
 SENSE_SAMPLE_LIMIT = 2500
@@ -138,24 +141,31 @@ class OracleFish(StrangeFish):
 
     def move_strategy(self, moves: List[chess.Move], seconds_left: float):
 
-        move_votes = defaultdict(float)
+        gambles = get_high_risk_moves(
+            self.engine, tuple(self.boards), moves
+        )
+        return max(gambles, key=gambles.get)
 
-        for board in tqdm(self.boards, desc='Evaluating best moves for each board'):
-            move = self._get_engine_move(next(iter(self.boards)))
-            move_votes[move] += 1
+        # move_votes = defaultdict(float)
+        #
+        # for board in tqdm(self.boards, desc='Evaluating best moves for each board'):
+        #     move = self._get_engine_move(next(iter(self.boards)))
+        #     move_votes[move] += 1
+        #
+        # if self.uncertainty_model:
+        #     inputs, uncertainties = self.measure_uncertainty(moves)
+        #
+        #     for i in range(len(moves)):
+        #         move_votes[moves[i]] += uncertainties[i]
+        #
+        # move = max(move_votes, key=move_votes.get)
+        #
+        # if self.uncertainty_model:
+        #     self.network_input_sequence += [inputs[moves.index(move)]]
+        #
+        # return move
 
-        if self.uncertainty_model:
-            inputs, uncertainties = self.measure_uncertainty(moves)
 
-            for i in range(len(moves)):
-                move_votes[moves[i]] += uncertainties[i]
-
-        move = max(move_votes, key=move_votes.get)
-
-        if self.uncertainty_model:
-            self.network_input_sequence += [inputs[moves.index(move)]]
-
-        return move
 
     def handle_move_result(self, requested_move: Optional[chess.Move], taken_move: Optional[chess.Move],
                            captured_opponent_piece: bool, capture_square: Optional[Square]):
@@ -192,10 +202,10 @@ class OracleFish(StrangeFish):
                 move
             ) for move in moves]
 
-        results = np.array([self.uncertainty_model.predict(np.array(self.network_input_sequence + [input])) for input in inputs])
+        results = np.array(
+            [self.uncertainty_model.predict(np.array(self.network_input_sequence + [input])) for input in inputs])
 
         return inputs, results[:, -1]
-
 
     def _get_engine_move(self, board: chess.Board):
         # Capture the opponent's king if possible
