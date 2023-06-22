@@ -23,7 +23,7 @@ from reconchess import play_local_game
 from reconchess.bots.trout_bot import TroutBot
 from reconchess.scripts.rc_replay import ReplayWindow
 
-from strangefish.my_strategy import OracleFish
+from strangefish.zubat_strategy import Zubat
 from strangefish.strangefish_strategy import StrangeFish2
 
 
@@ -31,7 +31,7 @@ def main():
 
     winner_color, win_reason, game_history = play_local_game(
         TroutBot(),
-        OracleFish(game_id="EXAMPLE"),
+        Zubat(game_id="EXAMPLE"),
     )
 
     window = ReplayWindow(game_history)

@@ -41,14 +41,14 @@ from strangefish.utilities import (
 )
 from strangefish.utilities.chess_model_embedding import chess_model_embedding
 from strangefish.utilities.rbc_move_score import calculate_score
-from strangefish.zubat_strategy.risk_taker import get_high_risk_moves
+from risk_taker import get_high_risk_moves
 
 SCORE_ROUNDOFF = 1e-5
 SENSE_SAMPLE_LIMIT = 2500
 SCORE_SAMPLE_LIMIT = 250
 
 
-class OracleFish(StrangeFish):
+class Zubat(StrangeFish):
 
     def __init__(
             self,
@@ -164,8 +164,6 @@ class OracleFish(StrangeFish):
         #     self.network_input_sequence += [inputs[moves.index(move)]]
         #
         # return move
-
-
 
     def handle_move_result(self, requested_move: Optional[chess.Move], taken_move: Optional[chess.Move],
                            captured_opponent_piece: bool, capture_square: Optional[Square]):
