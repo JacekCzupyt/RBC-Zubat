@@ -41,7 +41,7 @@ from strangefish.utilities import (
 )
 from strangefish.utilities.chess_model_embedding import chess_model_embedding
 from strangefish.utilities.rbc_move_score import calculate_score
-from risk_taker import get_high_risk_moves
+from strangefish.zubat_strategy.risk_taker import get_high_risk_moves
 
 SCORE_ROUNDOFF = 1e-5
 SENSE_SAMPLE_LIMIT = 2500
@@ -57,7 +57,9 @@ class Zubat(StrangeFish):
             game_id=None,
             rc_disable_pbar=RC_DISABLE_PBAR,
 
-            uncertainty_model=None
+            uncertainty_model=None,
+            move_vote_value=100,
+            uncertainty_multiplier=50,
     ):
         """
         Constructs an instance of the StrangeFish2 agent.
@@ -76,6 +78,9 @@ class Zubat(StrangeFish):
         self.previous_move_capture = None
         self.opponent_capture = None
         self.sense_position = None
+
+        self.move_vote_value = move_vote_value
+        self.uncertainty_multiplier = uncertainty_multiplier
 
         self.network_input_sequence = []
 
@@ -140,35 +145,58 @@ class Zubat(StrangeFish):
         return sense_choice
 
     def move_strategy(self, moves: List[chess.Move], seconds_left: float):
+        uncertainty_results = defaultdict(float)
 
-        gambles = get_high_risk_moves(
+        if self.uncertainty_model:
+            inputs, uncertainty_results = self.uncertainty_strategy(moves, seconds_left)
+
+        analytical_results = self.analytical_strategy(moves, seconds_left)
+
+        gamble_results = get_high_risk_moves(
             self.engine, tuple(self.boards), moves
         )
-        return max(gambles, key=gambles.get)
 
-        # move_votes = defaultdict(float)
-        #
-        # for board in tqdm(self.boards, desc='Evaluating best moves for each board'):
-        #     move = self._get_engine_move(next(iter(self.boards)))
-        #     move_votes[move] += 1
-        #
-        # if self.uncertainty_model:
-        #     inputs, uncertainties = self.measure_uncertainty(moves)
-        #
-        #     for i in range(len(moves)):
-        #         move_votes[moves[i]] += uncertainties[i]
-        #
-        # move = max(move_votes, key=move_votes.get)
-        #
-        # if self.uncertainty_model:
-        #     self.network_input_sequence += [inputs[moves.index(move)]]
-        #
-        # return move
+        results = {
+            move:
+                uncertainty_results[move] * self.uncertainty_multiplier +
+                analytical_results[move] +
+                gamble_results[move] * uncertainty_results[move]
+            for move in moves
+        }
+
+        move = max(results, key=results.get)
+
+        if self.uncertainty_model:
+            self.network_input_sequence += [inputs[moves.index(move)]]
+
+        return move
+
+    def analytical_strategy(self, moves: List[chess.Move], seconds_left: float):
+        move_votes = defaultdict(float)
+
+        for board in tqdm(self.boards, desc='Evaluating best moves for each board'):
+            move = self._get_engine_move(board)
+            move_votes[move] += self.move_vote_value / len(self.boards)
+
+        return move_votes
+
+    def uncertainty_strategy(self, moves: List[chess.Move], seconds_left: float):
+        move_votes = defaultdict(float)
+
+        inputs, uncertainties = self.measure_uncertainty(moves)
+
+        for i in range(len(moves)):
+            move_votes[moves[i]] += uncertainties[i]
+
+        return inputs, move_votes
 
     def handle_move_result(self, requested_move: Optional[chess.Move], taken_move: Optional[chess.Move],
                            captured_opponent_piece: bool, capture_square: Optional[Square]):
         self.previous_requested_move = requested_move
-        self.previous_move_piece_type = next(iter(self.boards)).piece_at(requested_move.from_square).piece_type
+        if requested_move is not None:
+            self.previous_move_piece_type = next(iter(self.boards)).piece_at(requested_move.from_square).piece_type
+        else:
+            self.previous_move_piece_type = None
         self.previous_taken_move = taken_move
         self.previous_move_capture = capture_square
 
@@ -201,9 +229,10 @@ class Zubat(StrangeFish):
             ) for move in moves]
 
         results = np.array(
-            [self.uncertainty_model.predict(np.array(self.network_input_sequence + [input])) for input in inputs])
+            [self.uncertainty_model.predict(np.array([self.network_input_sequence + [input]])) for input in inputs]
+        )
 
-        return inputs, results[:, -1]
+        return inputs, results.flatten()
 
     def _get_engine_move(self, board: chess.Board):
         # Capture the opponent's king if possible

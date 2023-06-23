@@ -1,2 +1,0 @@
-from risk_taker import get_high_risk_moves
-from zubat_strategy import Zubat

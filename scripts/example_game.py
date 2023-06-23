@@ -23,7 +23,8 @@ from reconchess import play_local_game
 from reconchess.bots.trout_bot import TroutBot
 from reconchess.scripts.rc_replay import ReplayWindow
 
-from strangefish.zubat_strategy import Zubat
+from strangefish.models.uncertainty_lstm import uncertainty_lstm_1
+from strangefish.zubat_strategy.zubat_strategy import Zubat
 from strangefish.strangefish_strategy import StrangeFish2
 
 
@@ -31,7 +32,7 @@ def main():
 
     winner_color, win_reason, game_history = play_local_game(
         TroutBot(),
-        Zubat(game_id="EXAMPLE"),
+        Zubat(game_id="EXAMPLE", uncertainty_model=uncertainty_lstm_1('../uncertainty_model/uncertainty_lstm_3/weights')),
     )
 
     window = ReplayWindow(game_history)

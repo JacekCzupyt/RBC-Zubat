@@ -17,7 +17,7 @@ def get_high_risk_moves(
         time_limit=None,
         depth=1,
         samples=1000,
-        score_config: ScoreConfig = ScoreConfig(),
+        score_config: ScoreConfig = ScoreConfig(capture_king_score=100, checkmate_score=90, into_check_score=-100, remain_in_check_penalty=-20, op_into_check_score=-40),
         rc_disable_pbar=False,
 ):
     results = {move: [] for move in moves}
@@ -39,9 +39,9 @@ def get_high_risk_moves(
 
                 opponent_move = random.choice(rbc_legal_moves(board))
 
-                print(board)
-                print(opponent_move)
-                print('')
+                # print(board)
+                # print(opponent_move)
+                # print('')
 
                 score = -calculate_score(engine, board, move=opponent_move, is_op_turn=False)
                 # opponent_taken_move = simulate_move(board, opponent_move)
