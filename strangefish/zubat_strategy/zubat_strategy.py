@@ -21,7 +21,8 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     Based on https://github.com/ginop/reconchess-strangefish
     Original copyright (c) 2019, Gino Perrotta, Robert Perrotta, Taylor Myers
 """
-
+import json
+import os.path
 import random
 from collections import defaultdict
 from time import time
@@ -54,12 +55,14 @@ class Zubat(StrangeFish):
             self,
 
             log_to_file=True,
-            game_id=None,
+            game_id=int(time()),
             rc_disable_pbar=RC_DISABLE_PBAR,
 
             uncertainty_model=None,
             move_vote_value=100,
             uncertainty_multiplier=50,
+            log_move_scores=True,
+            log_path="game_logs/move_score_logs"
     ):
         """
         Constructs an instance of the StrangeFish2 agent.
@@ -83,6 +86,12 @@ class Zubat(StrangeFish):
         self.uncertainty_multiplier = uncertainty_multiplier
 
         self.network_input_sequence = []
+
+        self.log_move_scores = log_move_scores
+        self.move_scores_log = []
+        self.log_path = log_path
+
+        self.game_id = game_id
 
     def handle_game_start(self, color: Color, board: chess.Board, opponent_name: str):
         super().handle_game_start(color, board, opponent_name)
@@ -165,6 +174,23 @@ class Zubat(StrangeFish):
         }
 
         move = max(results, key=results.get)
+
+        if self.log_move_scores:
+            move_dict = {
+                "move_number": len(self.move_scores_log) + 1,
+                "chosen_move": str(move),
+                "moves": sorted([
+                    {
+                        "move": str(move),
+                        "score": results[move],
+                        "analytical": analytical_results[move],
+                        "uncertainty": uncertainty_results[move],
+                        "gamble": gamble_results[move],
+                    }
+                    for move in moves
+                ], key=lambda d: -d["score"])
+            }
+            self.move_scores_log.append(move_dict)
 
         if self.uncertainty_model:
             self.network_input_sequence += [inputs[moves.index(move)]]
@@ -267,6 +293,10 @@ class Zubat(StrangeFish):
         """
         Quit the StockFish engine instance(s) associated with this strategy once the game is over.
         """
+
+        if self.log_move_scores:
+            with open(os.path.join(self.log_path, f"{self.game_id}.json"), "w") as outfile:
+                json.dump(self.move_scores_log, outfile)
 
         # Shut down StockFish
         self.logger.debug("Terminating engine.")
