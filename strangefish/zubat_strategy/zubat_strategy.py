@@ -21,6 +21,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     Based on https://github.com/ginop/reconchess-strangefish
     Original copyright (c) 2019, Gino Perrotta, Robert Perrotta, Taylor Myers
 """
+import csv
 import json
 import os.path
 import random
@@ -88,10 +89,21 @@ class Zubat(StrangeFish):
         self.network_input_sequence = []
 
         self.log_move_scores = log_move_scores
-        self.move_scores_log = []
         self.log_path = log_path
 
         self.game_id = game_id
+
+        if self.log_move_scores:
+            self.move_score_log_path = os.path.join(self.log_path, f"{self.game_id}_{'w' if self.color else 'b'}.csv")
+            with open(self.move_score_log_path, "w", newline='') as outfile:
+                writer = csv.DictWriter(
+                    outfile,
+                    fieldnames=["move_number", "move", "score", "analytical", "uncertainty", "gamble"]
+                )
+                writer.writeheader()
+
+
+
 
     def handle_game_start(self, color: Color, board: chess.Board, opponent_name: str):
         super().handle_game_start(color, board, opponent_name)
@@ -176,21 +188,20 @@ class Zubat(StrangeFish):
         move = max(results, key=results.get)
 
         if self.log_move_scores:
-            move_dict = {
-                "move_number": len(self.move_scores_log) + 1,
-                "chosen_move": str(move),
-                "moves": sorted([
-                    {
-                        "move": str(move),
-                        "score": results[move],
-                        "analytical": analytical_results[move],
-                        "uncertainty": uncertainty_results[move],
-                        "gamble": gamble_results[move],
-                    }
-                    for move in moves
-                ], key=lambda d: -d["score"])
-            }
-            self.move_scores_log.append(move_dict)
+            moves_log = sorted([
+                {
+                    "move_number": self.turn_num,
+                    "move": str(move),
+                    "score": results[move],
+                    "analytical": analytical_results[move],
+                    "uncertainty": uncertainty_results[move],
+                    "gamble": gamble_results[move],
+                }
+                for move in moves
+            ], key=lambda d: -d["score"])
+            with open(self.move_score_log_path, "a", newline='') as outfile:
+                writer = csv.DictWriter(outfile, fieldnames=["move_number", "move", "score", "analytical", "uncertainty", "gamble"])
+                writer.writerows(moves_log)
 
         if self.uncertainty_model:
             self.network_input_sequence += [inputs[moves.index(move)]]
@@ -293,10 +304,6 @@ class Zubat(StrangeFish):
         """
         Quit the StockFish engine instance(s) associated with this strategy once the game is over.
         """
-
-        if self.log_move_scores:
-            with open(os.path.join(self.log_path, f"{self.game_id}.json"), "w") as outfile:
-                json.dump(self.move_scores_log, outfile)
 
         # Shut down StockFish
         self.logger.debug("Terminating engine.")
