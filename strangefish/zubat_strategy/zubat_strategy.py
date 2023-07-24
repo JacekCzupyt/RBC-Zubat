@@ -63,8 +63,11 @@ class Zubat(StrangeFish):
             uncertainty_model=None,
             move_vote_value=100,
             uncertainty_multiplier=50,
+
             log_move_scores=True,
-            log_path="game_logs/move_score_logs"
+            log_dir="game_logs/move_score_logs",
+            log_file=None,
+            engine_log_file=None
     ):
         """
         Constructs an instance of the StrangeFish2 agent.
@@ -73,7 +76,10 @@ class Zubat(StrangeFish):
         :param game_id: Any printable identifier for logging (typically, the game number given by the server)
         :param rc_disable_pbar: A boolean flag to turn on/off the tqdm progress bars
         """
-        super().__init__(log_to_file=log_to_file, game_id=game_id, rc_disable_pbar=rc_disable_pbar)
+        super().__init__(log_to_file=log_to_file, game_id=game_id, rc_disable_pbar=rc_disable_pbar, log_dir=log_dir, log_file=log_file)
+
+        self.logger.debug("Creating new instance of Zubat.")
+
         self.engine = None
         self.uncertainty_model = uncertainty_model
 
@@ -90,7 +96,7 @@ class Zubat(StrangeFish):
         self.network_input_sequence = []
 
         self.log_move_scores = log_move_scores
-        self.log_path = log_path
+        self.log_path = log_dir
 
         self.game_id = game_id
 
@@ -102,16 +108,16 @@ class Zubat(StrangeFish):
         self.score_config = ScoreConfig()
 
         if self.log_move_scores:
-            self.move_score_log_path = os.path.join(self.log_path, f"{self.game_id}_{'w' if self.color else 'b'}.csv")
-            with open(self.move_score_log_path, "w", newline='') as outfile:
-                writer = csv.DictWriter(
-                    outfile,
-                    fieldnames=["move_number", "move", "score", "analytical", "uncertainty", "gamble"]
-                )
-                writer.writeheader()
+            self._setup_move_score_logging()
 
-
-
+    def _setup_move_score_logging(self):
+        self.move_score_log_path = os.path.join(self.log_path, f"move_scores_{self.game_id}.csv")
+        with open(self.move_score_log_path, "w", newline='') as outfile:
+            writer = csv.DictWriter(
+                outfile,
+                fieldnames=["move_number", "move", "score", "analytical", "uncertainty", "gamble"]
+            )
+            writer.writeheader()
 
     def handle_game_start(self, color: Color, board: chess.Board, opponent_name: str):
         super().handle_game_start(color, board, opponent_name)
@@ -317,7 +323,7 @@ class Zubat(StrangeFish):
         phase_end_time = start_time + time_for_phase
         total_evals = len(self.boards) * len(moves)  # TODO: change this to match new mapping
         num_evals_done = num_precomputed = sum(est.num_samples for est in move_scores.values())
-        with tqdm(desc="Computing move scores", unit="evals", disable=self.rc_disable_pbar, total=total_evals) as pbar:
+        with tqdm(desc="Zubat: Computing move scores", unit="evals", disable=self.rc_disable_pbar, total=total_evals) as pbar:
             pbar.update(num_precomputed)
 
             sorted_priorities = sorted(self.board_sample_priority.keys(), reverse=True)

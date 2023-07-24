@@ -65,6 +65,8 @@ class StrangeFish(Player):
         stream_log_level=logging.INFO,
         game_id=None,
         rc_disable_pbar=RC_DISABLE_PBAR,
+        log_dir=None,
+        log_file=None
     ):
         """
         Set up the MHT core of StrangeFish.
@@ -92,7 +94,7 @@ class StrangeFish(Player):
         game_log.setLevel(logging.DEBUG)
         game_log.addHandler(create_stream_handler(stream_log_level))
         if log_to_file:
-            game_log.addHandler(create_file_handler(f"game_{game_id}.log"))
+            game_log.addHandler(create_file_handler(log_file or f"{game_id}.log", log_dir=log_dir))
 
         self.logger = logging.getLogger(f"game-{game_id}.agent")
         self.logger.setLevel(logging.DEBUG)
@@ -101,7 +103,7 @@ class StrangeFish(Player):
     def handle_game_start(self, color: Color, board: chess.Board, opponent_name: str):
         color_name = chess.COLOR_NAMES[color]
 
-        self.logger.info(f"Starting a new game as {color_name} against {opponent_name}.")
+        self.logger.info(f"{self.__class__.__name__} starting a new game as {color_name} against {opponent_name}.")
         self.boards = {board}
         self.board_sample_priority = defaultdict(set)
         self.stored_old_boards = BoardSetBacklog()
