@@ -112,6 +112,9 @@ class StrangeFish(Player):
         self.num_boards_at_end_of_turn = 1
         self.projected_end_time = time() + 900
 
+        if color:
+            self.board_sample_priority[0] = {board}
+
     def handle_opponent_move_result(self, captured_my_piece: bool, capture_square: Optional[Square]):
         self.turn_num += 1
         self.logger.debug("Starting turn %d.", self.turn_num)

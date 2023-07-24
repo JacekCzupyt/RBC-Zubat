@@ -16,7 +16,7 @@ def get_high_risk_moves(
         moves: List[chess.Move],
         time_limit=None,
         depth=1,
-        samples=5000,
+        samples=1500,
         score_config: ScoreConfig = ScoreConfig(capture_king_score=100, checkmate_score=90, into_check_score=-100, remain_in_check_penalty=-20, op_into_check_score=-40),
         rc_disable_pbar=False,
 ):

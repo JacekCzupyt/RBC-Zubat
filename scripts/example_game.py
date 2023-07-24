@@ -18,28 +18,53 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY
 WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
 IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 """
+import logging
+import random
+import sys
+from time import time
 
-from reconchess import play_local_game
+from reconchess import play_local_game, LocalGame
 from reconchess.bots.trout_bot import TroutBot
-from reconchess.scripts.rc_replay import ReplayWindow
-
-from strangefish.models.uncertainty_lstm import uncertainty_lstm_1
-from strangefish.zubat_strategy.zubat_strategy import Zubat
 from strangefish.strangefish_strategy import StrangeFish2
 
+from strangefish.zubat_strategy.zubat_strategy import Zubat
+from strangefish.models.uncertainty_lstm import uncertainty_lstm_1
 
-def main():
 
-    winner_color, win_reason, game_history = play_local_game(
-        TroutBot(),
-        Zubat(game_id="EXAMPLE", uncertainty_model=uncertainty_lstm_1('../uncertainty_model/uncertainty_lstm_3/weights')),
+def play_game():
+    game = LocalGame(seconds_per_player=900)
+    zubat_color = random.random() > 0.5
+    id = int(time())
+
+    zubat = Zubat(
+        uncertainty_model=uncertainty_lstm_1('uncertainty_model/uncertainty_lstm_4/weights'),
+        game_id=f"zubat_{id}_{'w' if zubat_color else 'b'}",
+        log_dir=f'game_logs/test_games/{id}'
+    )
+    strangefish = StrangeFish2(
+        game_id=f"stragefish2_{id}_{'b' if zubat_color else 'w'}",
+        log_to_file=True,
+        log_dir=f'game_logs/test_games/{id}',
     )
 
-    window = ReplayWindow(game_history)
-    while True:
-        window.update()
-        window.draw()
+    try:
+        winner_color, win_reason, game_history = play_local_game(
+            zubat if zubat_color else strangefish,
+            strangefish if zubat_color else zubat,
+            game,
+        )
+    except Exception as e:
+        logging.exception(e)
+
+    game_history = game.get_game_history()
+    game_history.save(f'game_logs/test_games/{id}/game_{id}.log')
 
 
 if __name__ == "__main__":
-    main()
+    no_games = int(sys.argv[1])
+
+    for _ in range(no_games):
+        try:
+            play_game()
+        except Exception as e:
+            logging.exception(e)
