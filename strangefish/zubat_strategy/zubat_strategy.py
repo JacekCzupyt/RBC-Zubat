@@ -22,7 +22,6 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     Original copyright (c) 2019, Gino Perrotta, Robert Perrotta, Taylor Myers
 """
 import csv
-import json
 import os.path
 import random
 from collections import defaultdict
@@ -40,11 +39,11 @@ from strangefish.utilities import (
     SEARCH_SPOTS,
     stockfish,
     sense_masked_bitboards,
-    PASS, fast_copy_board, rbc_legal_move_requests, simulate_move, rbc_legal_moves,
+    PASS, simulate_move, rbc_legal_moves,
 )
 from strangefish.utilities.chess_model_embedding import chess_model_embedding
 from strangefish.utilities.rbc_move_score import calculate_score, ScoreConfig
-from strangefish.zubat_strategy.risk_taker import get_high_risk_moves
+from strangefish.zubat_strategy.risk_taker import RiskTakerModule
 
 SCORE_ROUNDOFF = 1e-5
 SENSE_SAMPLE_LIMIT = 2500
@@ -107,6 +106,14 @@ class Zubat(StrangeFish):
         self.move_config = MoveConfig()
         self.score_config = ScoreConfig()
 
+        self.risk_taker_module = RiskTakerModule(
+            self.engine,
+            self.score_cache,
+            # score_config: ScoreConfig = ScoreConfig(capture_king_score=100, checkmate_score=90, into_check_score=-100, remain_in_check_penalty=-20, op_into_check_score=-40),
+            score_config=self.score_config,
+            rc_disable_pbar=self.rc_disable_pbar
+        )
+
         if self.log_move_scores:
             self._setup_move_score_logging()
 
@@ -123,6 +130,7 @@ class Zubat(StrangeFish):
         super().handle_game_start(color, board, opponent_name)
 
         self.engine = stockfish.create_engine()
+        self.risk_taker_module.engine = self.engine
 
     def sense_strategy(self, sense_actions: List[Square], moves: List[chess.Move], seconds_left: float):
         # Don't sense if there is nothing to learn from it
@@ -188,8 +196,8 @@ class Zubat(StrangeFish):
         analytical_results = self.analytical_strategy(moves, seconds_left)
         moves = list(analytical_results.keys())
 
-        gamble_results = get_high_risk_moves(
-            self.engine, tuple(self.boards), moves
+        gamble_results = self.risk_taker_module.get_high_risk_moves(
+            tuple(self.boards), moves, self.allocate_time(seconds_left)  # TODO: time allocation
         )
 
         results = {
