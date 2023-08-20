@@ -61,7 +61,7 @@ class Zubat(StrangeFish):
 
             uncertainty_model=None,
             move_vote_value=100,
-            uncertainty_multiplier=50,
+            uncertainty_multiplier=200,
 
             log_move_scores=True,
             log_dir="game_logs/move_score_logs",
@@ -104,12 +104,12 @@ class Zubat(StrangeFish):
 
         # TODO
         self.move_config = MoveConfig()
-        self.score_config = ScoreConfig()
+        self.score_config = ScoreConfig(capture_king_score=3000, checkmate_score=2500, into_check_score=-2000, remain_in_check_penalty=-500, op_into_check_score=-1000)
+        # self.score_config = ScoreConfig()
 
         self.risk_taker_module = RiskTakerModule(
             self.engine,
             self.score_cache,
-            # score_config: ScoreConfig = ScoreConfig(capture_king_score=100, checkmate_score=90, into_check_score=-100, remain_in_check_penalty=-20, op_into_check_score=-40),
             score_config=self.score_config,
             rc_disable_pbar=self.rc_disable_pbar
         )

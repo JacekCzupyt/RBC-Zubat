@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-#SBATCH --constraint=dgx
+#SBATCH --constraint=sr
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=2
@@ -19,10 +19,14 @@ echo "CUDA_VISIBLE_DEVICES: ${CUDA_VISIBLE_DEVICES}"
 echo "singularity version: $(singularity version)"
 echo "image: ${1}"
 echo "Training command: python ${2}" "${@:3}"
-singularity run \
-  --nv \
-  --env CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES}",STOCKFISH_EXECUTABLE=/home2/faculty/jczupyt/projects/stockfish/stockfish-ubuntu-x86-64-avx2 \
-  --bind /home2/faculty/jczupyt/projects/zubat:/app:ro \
-  "${1}" \
-  python "${2}" "${@:3}"
-date
+echo "Run command ${4} times"
+for i in $(seq 1 ${4})
+do
+  singularity run \
+    --nv \
+    --env CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES}",STOCKFISH_EXECUTABLE=/home2/faculty/jczupyt/projects/stockfish/stockfish-ubuntu-x86-64-avx2 \
+    --bind /home2/faculty/jczupyt/projects/zubat:/app:ro \
+    "${1}" \
+    python "${2}" "${@:3}"
+  date
+done
