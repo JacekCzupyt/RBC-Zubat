@@ -34,10 +34,10 @@ from reconchess import Square, Color
 from tqdm import tqdm
 
 from strangefish.strangefish_mht_core import StrangeFish, RC_DISABLE_PBAR
-from strangefish.strangefish_strategy import RunningEst, make_cache_key, MoveConfig
+from strangefish.strangefish_strategy import RunningEst, SenseConfig, TimeConfig, make_cache_key, MoveConfig
 from strangefish.utilities import (
     SEARCH_SPOTS,
-    stockfish,
+    rbc_legal_move_requests, sense_partition_leq, stockfish,
     sense_masked_bitboards,
     PASS, simulate_move, rbc_legal_moves,
 )
@@ -66,7 +66,10 @@ class Zubat(StrangeFish):
             log_move_scores=True,
             log_dir="game_logs/move_score_logs",
             log_file=None,
-            engine_log_file=None
+            engine_log_file=None,
+
+            board_weight_90th_percentile: float = 3_000,
+            min_board_weight: float = 0.02
     ):
         """
         Constructs an instance of the StrangeFish2 agent.
@@ -105,7 +108,11 @@ class Zubat(StrangeFish):
         # TODO
         self.move_config = MoveConfig()
         self.score_config = ScoreConfig(capture_king_score=3000, checkmate_score=2500, into_check_score=-2000, remain_in_check_penalty=-500, op_into_check_score=-1000)
-        # self.score_config = ScoreConfig()
+        self.time_config = TimeConfig()
+        self.sense_config = SenseConfig()
+
+        self.board_weight_90th_percentile = board_weight_90th_percentile
+        self.min_board_weight = min_board_weight
 
         self.risk_taker_module = RiskTakerModule(
             self.engine,
@@ -137,7 +144,10 @@ class Zubat(StrangeFish):
         if len(self.boards) == 1:
             return None
 
-        self.sense_position = self.sense_min_states(sense_actions, moves, seconds_left)
+        if len(self.boards) < 1000:
+            self.sense_position = self.sense_max_outcome(sense_actions, moves, seconds_left)
+        else:
+            self.sense_position = self.sense_min_states(sense_actions, moves, seconds_left)
 
         return self.sense_position
 
@@ -185,6 +195,305 @@ class Zubat(StrangeFish):
                 if abs(score - max_sense_score) < SCORE_ROUNDOFF
             ]
         )
+        return sense_choice
+
+    def cache_board(self, board: chess.Board):
+        """Add a new board to the cache (evaluate the board's strength and relative score for every possible move)."""
+        op_score = self.memo_calc_set([(board, PASS, None, None)])[make_cache_key(board)]
+        pseudo_legal_moves = list(board.generate_pseudo_legal_moves())
+        self.boards_in_cache.add(board)
+        self.memo_calc_set([(board, move, -op_score, pseudo_legal_moves) for move in rbc_legal_move_requests(board)])
+
+    def memo_calc_set(self, requests):
+        """Handler for requested scores. Filters for unique requests, then gets cached or calculated results."""
+
+        filtered_requests = set()
+        equivalent_requests = defaultdict(list)
+        for board, move, prev_turn_score, pseudo_legal_moves in requests:
+            if pseudo_legal_moves is None:
+                pseudo_legal_moves = list(board.generate_pseudo_legal_moves())
+            taken_move = simulate_move(board, move, pseudo_legal_moves) or PASS
+            request_key = make_cache_key(board, move, prev_turn_score)
+            result_key = make_cache_key(board, taken_move, prev_turn_score)
+            equivalent_requests[result_key].append(request_key)
+            filtered_requests.add((board, taken_move, prev_turn_score, result_key))
+
+        start = time()
+
+        results = {}
+        num_new = 0
+        for board, move, prev_turn_score, key in filtered_requests:
+            results[key], is_new = self.memo_calc_score(board, move, prev_turn_score, key=key)
+            if is_new:
+                num_new += 1
+
+        for result_key, request_keys in equivalent_requests.items():
+            for request_key in request_keys:
+                result = {request_key: results[result_key]}
+                self.score_cache.update(result)
+                results.update(result)
+
+        return results
+
+    def weight_board_probability(self, score):
+        """Convert a board strength score into a probability for use in weighted averages"""
+        if self.board_weight_90th_percentile is None:
+            return 1
+        return 1 / (1 + np.exp(-2 * np.log(3) / self.board_weight_90th_percentile * score)) + self.min_board_weight
+
+    def sense_max_outcome(self, sense_actions: List[Square], moves: List[chess.Move], seconds_left: float):
+        """Choose a sense square to maximize the expected outcome of this turn."""
+
+        if self.move_config.force_promotion_queen:
+            moves = [move for move in moves if move.promotion in (None, chess.QUEEN)]
+
+        # Allocate remaining time and use that to determine the sample_size for this turn
+        time_for_turn = self.allocate_time(seconds_left)
+        time_for_phase = time_for_turn * self.time_config.time_for_sense
+
+        self.logger.debug(f"In sense phase with {seconds_left:.2f} seconds left. "
+                          f"Allowing up to {time_for_phase:.2f} seconds for this sense step.")
+
+        # Until stop time, compute board scores
+        n_boards = len(self.boards)
+        start_time = time()
+        phase_end_time = start_time + time_for_phase
+        board_sample = self.boards & self.boards_in_cache
+        num_precomputed = len(board_sample)
+        with tqdm(desc="Computing move scores", unit="boards", disable=self.rc_disable_pbar, total=len(self.boards)) as pbar:
+            pbar.update(num_precomputed)
+            for priority in sorted(self.board_sample_priority.keys(), reverse=True):
+                priority_boards = self.boards & self.board_sample_priority[priority]
+                if not priority_boards:
+                    continue
+                num_priority = len(priority_boards)
+                self.logger.debug(
+                    f"Sampling from priority {priority}: {num_priority} boards ({num_priority/n_boards*100:0.0f}%)"
+                )
+                priority_boards -= self.boards_in_cache
+                while priority_boards and len(board_sample) < SCORE_SAMPLE_LIMIT and time() < phase_end_time:
+                    board = priority_boards.pop()
+                    self.cache_board(board)
+                    board_sample.add(board)
+                    pbar.update()
+        self.logger.debug(f"Spent {time() - start_time:0.1f} seconds computing new move scores")
+        self.logger.debug(f"Had {num_precomputed} of {len(self.boards)} boards already cached")
+        self.logger.debug(f"Sampled {len(board_sample)} of {len(self.boards)} boards for sensing.")
+
+        # Initialize some parameters for tracking information about possible sense results
+        num_occurances = defaultdict(lambda: defaultdict(float))
+        weighted_probability = defaultdict(lambda: defaultdict(float))
+        total_weighted_probability = 0
+        sense_results = defaultdict(lambda: defaultdict(set))
+        sense_partitions = {sq: defaultdict(set) for sq in SEARCH_SPOTS}
+
+        # Initialize arrays for board and move data (dictionaries work here, too, but arrays were faster)
+        board_sample_weights = np.zeros(len(board_sample))
+        move_scores = np.zeros([len(moves), len(board_sample)])
+
+        for num_board, board in enumerate(tqdm(board_sample, disable=self.rc_disable_pbar,
+                                               desc="Sense+Move outcome evaluation", unit="boards")):
+
+            op_score = self.score_cache[make_cache_key(board)]
+
+            board_sample_weights[num_board] = self.weight_board_probability(op_score)
+            total_weighted_probability += board_sample_weights[num_board]
+
+            # Place move scores into array for later logical indexing
+            for num_move, move in enumerate(moves):
+                move_scores[num_move, num_board] = self.score_cache[make_cache_key(board, move, -op_score)]
+
+            # Gather information about sense results for each square on each board (and king locations)
+            for square in SEARCH_SPOTS:
+                sense_result = sense_masked_bitboards(board, square)
+                num_occurances[square][sense_result] += 1
+                weighted_probability[square][sense_result] += board_sample_weights[num_board]
+                sense_results[square][board] = sense_result
+                sense_partitions[square][sense_result].add(num_board)
+
+        # Calculate the mean, min, and max scores for each move across the board set (or at least the random sample)
+        full_set_mean_scores = (np.average(move_scores, axis=1, weights=board_sample_weights))
+        full_set_min_scores = (np.min(move_scores, axis=1))
+        full_set_max_scores = (np.max(move_scores, axis=1))
+        # Combine the mean, min, and max changes in scores based on the config settings
+        full_set_compound_score = (
+                full_set_mean_scores * self.move_config.mean_score_factor +
+                full_set_min_scores * self.move_config.min_score_factor +
+                full_set_max_scores * self.move_config.max_score_factor
+        )
+        max_full_set_move_score = np.max(full_set_compound_score)
+        full_set_move_choices = np.where(
+            full_set_compound_score >= (max_full_set_move_score - self.move_config.threshold_score)
+        )[0]
+        full_set_worst_outcome = np.min(move_scores[full_set_move_choices])
+
+        possible_outcomes = move_scores[full_set_move_choices].flatten()
+        outcome_weights = np.tile(board_sample_weights, len(full_set_move_choices)) / len(full_set_move_choices)
+        full_set_expected_outcome = np.average(possible_outcomes, weights=outcome_weights)
+        full_set_outcome_variance = np.sqrt(np.average((possible_outcomes - full_set_expected_outcome) ** 2, weights=outcome_weights))
+
+        valid_sense_squares = set()
+        for sense_option in SEARCH_SPOTS:
+            # First remove elements of the current valid list if the new option is at least as good
+            valid_sense_squares = [alt_option for alt_option in valid_sense_squares
+                                   if not sense_partition_leq(sense_partitions[sense_option].values(),
+                                                              sense_partitions[alt_option].values())]
+            # Then add this new option if none of the current options dominate it
+            if not any(
+                sense_partition_leq(sense_partitions[alt_option].values(), sense_partitions[sense_option].values())
+                for alt_option in valid_sense_squares
+            ):
+                valid_sense_squares.append(sense_option)
+
+        # Find the expected change in move scores caused by any sense choice
+        post_sense_score_variance = {}
+        post_sense_move_uncertainty = {}
+        post_sense_score_changes = {}
+        post_sense_worst_outcome = {}
+        post_sense_expected_outcome = {}
+        post_sense_outcome_variance = {}
+        for square in tqdm(valid_sense_squares, disable=self.rc_disable_pbar,
+                           desc="Evaluating sense options", unit="squares"):
+            possible_results = set(sense_results[square].values())
+            possible_outcomes = []
+            outcome_weights = []
+            if len(possible_results) > 1:
+                post_sense_score_change = {}
+                post_sense_move_choices = defaultdict(set)
+                post_sense_move_scores = {}
+                for sense_result in possible_results:
+                    subset_index = list(sense_partitions[square][sense_result])
+                    sub_set_move_scores = move_scores[:, subset_index]
+                    sub_set_board_weights = board_sample_weights[subset_index]
+
+                    # Calculate the mean, min, and max scores for each move across the board sub-set
+                    sub_set_mean_scores = (np.average(sub_set_move_scores, axis=1, weights=sub_set_board_weights))
+                    sub_set_min_scores = (np.min(sub_set_move_scores, axis=1))
+                    sub_set_max_scores = (np.max(sub_set_move_scores, axis=1))
+                    sub_set_compound_score = (
+                            sub_set_mean_scores * self.move_config.mean_score_factor +
+                            sub_set_min_scores * self.move_config.min_score_factor +
+                            sub_set_max_scores * self.move_config.max_score_factor
+                    )
+                    change_in_mean_scores = np.abs(sub_set_mean_scores - full_set_mean_scores)
+                    change_in_min_scores = np.abs(sub_set_min_scores - full_set_min_scores)
+                    change_in_max_scores = np.abs(sub_set_max_scores - full_set_max_scores)
+                    compound_change_in_score = (
+                            change_in_mean_scores * self.move_config.mean_score_factor +
+                            change_in_min_scores * self.move_config.min_score_factor +
+                            change_in_max_scores * self.move_config.max_score_factor
+                    )
+
+                    max_sub_set_move_score = np.max(sub_set_compound_score)
+                    sub_set_move_choices = np.where(
+                        sub_set_compound_score >= (max_sub_set_move_score - self.move_config.threshold_score)
+                    )[0]
+
+                    # Calculate the sense-choice-criteria
+                    post_sense_move_scores[sense_result] = sub_set_compound_score
+                    post_sense_score_change[sense_result] = float(np.mean(compound_change_in_score))
+                    post_sense_move_choices[sense_result] = sub_set_move_choices
+
+                    possible_outcomes.append(sub_set_move_scores[sub_set_move_choices].flatten())
+                    outcome_weights.append(
+                        np.tile(sub_set_board_weights, len(sub_set_move_choices)) / len(sub_set_move_choices)
+                    )
+
+                move_probabilities = {
+                    move: sum(
+                        weighted_probability[square][sense_result] / len(post_sense_move_choices[sense_result])
+                        for sense_result in possible_results
+                        if num_move in post_sense_move_choices[sense_result]
+                    )
+                    / sum(weighted_probability[square].values())
+                    for num_move, move in enumerate(moves)
+                }
+                # assert np.isclose(sum(move_probabilities.values()), 1)
+
+                _score_means = sum([
+                    post_sense_move_scores[sense_result] * weighted_probability[square][sense_result]
+                    for sense_result in set(sense_results[square].values())
+                ]) / total_weighted_probability
+                _score_variance = sum([
+                    (post_sense_move_scores[sense_result] - _score_means) ** 2
+                    * weighted_probability[square][sense_result]
+                    for sense_result in set(sense_results[square].values())
+                ]) / total_weighted_probability
+
+                possible_outcomes = np.concatenate(possible_outcomes)
+                outcome_weights = np.concatenate(outcome_weights)
+
+                _outcome_means = np.average(possible_outcomes, weights=outcome_weights)
+                _outcome_stdev = np.sqrt(
+                    np.average(
+                        (possible_outcomes - _outcome_means) ** 2,
+                        weights=outcome_weights,
+                    )
+                )
+
+                post_sense_score_variance[square] = np.average(np.sqrt(_score_variance))
+                post_sense_move_uncertainty[square] = 1 - sum(p ** 2 for p in move_probabilities.values())
+                post_sense_score_changes[square] = sum([
+                    post_sense_score_change[sense_result] * weighted_probability[square][sense_result]
+                    for sense_result in set(sense_results[square].values())
+                ]) / total_weighted_probability
+                post_sense_worst_outcome[square] = min(possible_outcomes)
+                post_sense_expected_outcome[square] = _outcome_means
+                post_sense_outcome_variance[square] = _outcome_stdev
+
+            else:
+                post_sense_score_variance[square] = 0
+                post_sense_move_uncertainty[square] = 0
+                post_sense_score_changes[square] = 0
+                post_sense_worst_outcome[square] = full_set_worst_outcome
+                post_sense_expected_outcome[square] = full_set_expected_outcome
+                post_sense_outcome_variance[square] = full_set_outcome_variance
+
+        # Also calculate the expected board set reduction for each sense square (scale from board sample to full set)
+        expected_set_reduction = {
+            square:
+                (len(self.boards) + self.stored_old_boards.expected_size) *
+                (1 - (1 / len(board_sample) / total_weighted_probability) *
+                 sum([num_occurances[square][sense_result] * weighted_probability[square][sense_result]
+                      for sense_result in set(sense_results[square].values())]))
+            for square in SEARCH_SPOTS
+        }
+
+        # Combine the expected-outcome, score-variance, and set-reduction estimates
+        sense_score = {
+            square: post_sense_expected_outcome[square] * self.sense_config.expected_outcome_coef
+            + post_sense_worst_outcome[square] * self.sense_config.worst_outcome_coef
+            + post_sense_outcome_variance[square] * self.sense_config.outcome_variance_coef
+            + post_sense_score_variance[square] * self.sense_config.score_variance_coef
+            + (expected_set_reduction[square] / self.sense_config.boards_per_centipawn)
+            for square in valid_sense_squares
+        }
+
+        self.logger.debug(
+            "Sense values presented as: (score change, move uncertainty, score variance, "
+            "expected outcome, outcome variance, worst outcome, set reduction, "
+            "and final combined score)"
+        )
+        for square in valid_sense_squares:
+            self.logger.debug(
+                f"{chess.SQUARE_NAMES[square]}: ("
+                f"{post_sense_score_changes[square]:5.0f}, "
+                f"{post_sense_move_uncertainty[square]:.2f}, "
+                f"{post_sense_score_variance[square]:5.0f}, "
+                f"{post_sense_expected_outcome[square]: 5.0f}, "
+                f"{post_sense_outcome_variance[square]:5.0f}, "
+                f"{post_sense_worst_outcome[square]: 5.0f}, "
+                f"{expected_set_reduction[square]:5.0f}, "
+                f"{sense_score[square]: 5.0f})"
+            )
+
+        # Determine the minimum score a move needs to be considered
+        highest_score = max(sense_score.values())
+        threshold_score = highest_score - SCORE_ROUNDOFF
+        # Create a list of all moves which scored above the threshold
+        sense_options = [square for square, score in sense_score.items() if score >= threshold_score]
+        # Randomly choose one of the remaining options
+        sense_choice = random.choice(sense_options)
         return sense_choice
 
     def move_strategy(self, moves: List[chess.Move], seconds_left: float):
@@ -238,15 +547,6 @@ class Zubat(StrangeFish):
         # turns_left = self.time_config.turns_to_plan_for - fraction_turn_passed  # account for previous parts of turn
         # equal_time_split = seconds_left / turns_left
         # return min(max(equal_time_split, self.time_config.min_time_for_turn), self.time_config.max_time_for_turn)
-
-    # def analytical_strategy(self, moves: List[chess.Move], seconds_left: float):
-    #     move_votes = defaultdict(float)
-    #
-    #     for board in tqdm(self.boards, desc='Evaluating best moves for each board'):
-    #         move = self._get_engine_move(board)
-    #         move_votes[move] += self.move_vote_value / len(self.boards)
-    #
-    #     return move_votes
 
     def analytical_strategy(self, moves: List[chess.Move], seconds_left: float):
         """
