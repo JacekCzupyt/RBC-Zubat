@@ -86,6 +86,8 @@ class SenseConfig:
     worst_outcome_coef: float = 0.2  # The scaling factor for sensing to maximize the worst turn outcome
     outcome_variance_coef: float = -0.3  # The scaling factor for sensing based on turn outcome variance
     score_variance_coef: float = 0.15  # The scaling factor for sensing based on move score variance
+    risk_taker_samples_per_move: int = 3  # The number of samples per move for the risk-taker monte carlo simulation
+    risk_taker_coef: float = 0.4  # How important is the risk-taker result during sense selection
 
 
 @dataclass
@@ -107,6 +109,7 @@ class TimeConfig:
     max_time_for_turn: float = 40.0  # maximum time to allocate for a turn
     time_for_sense: float = 0.7  # fraction of turn spent in choose_sense
     time_for_move: float = 0.3  # fraction of turn spent in choose_move
+    time_for_risk: float = 0.0
     calc_time_per_move: float = 0.005  # starting time estimate for move score calculation
 
 

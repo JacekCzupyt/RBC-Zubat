@@ -105,10 +105,12 @@ class Zubat(StrangeFish):
         self.score_cache = dict()
         self.boards_in_cache = set()
 
+        self.analytical_score_cache = dict()
+
         # TODO
         self.move_config = MoveConfig()
         self.score_config = ScoreConfig(capture_king_score=3000, checkmate_score=2500, into_check_score=-2000, remain_in_check_penalty=-500, op_into_check_score=-1000)
-        self.time_config = TimeConfig()
+        self.time_config = TimeConfig(time_for_sense=0.6, time_for_move=0.2, time_for_risk=0.2)
         self.sense_config = SenseConfig()
 
         self.board_weight_90th_percentile = board_weight_90th_percentile
@@ -116,7 +118,8 @@ class Zubat(StrangeFish):
 
         self.risk_taker_module = RiskTakerModule(
             self.engine,
-            self.score_cache,
+            self.analytical_score_cache,
+            self.logger,
             score_config=self.score_config,
             rc_disable_pbar=self.rc_disable_pbar
         )
@@ -169,7 +172,7 @@ class Zubat(StrangeFish):
         self.logger.debug(f"Sampled {len(board_sample)} boards out of {len(self.boards)} for sensing.")
 
         for board in tqdm(board_sample, disable=self.rc_disable_pbar,
-                          desc="Sense quantity evaluation", unit="boards"):
+                          desc="Zubat: Sense quantity evaluation", unit="boards"):
 
             # Gather information about sense results for each square on each board
             for square in SEARCH_SPOTS:
@@ -199,33 +202,44 @@ class Zubat(StrangeFish):
 
     def cache_board(self, board: chess.Board):
         """Add a new board to the cache (evaluate the board's strength and relative score for every possible move)."""
-        op_score = self.memo_calc_set([(board, PASS, None, None)])[make_cache_key(board)]
+        op_score = self.memo_calc_set(board, [PASS], None, None)[make_cache_key(board)]
         pseudo_legal_moves = list(board.generate_pseudo_legal_moves())
         self.boards_in_cache.add(board)
-        self.memo_calc_set([(board, move, -op_score, pseudo_legal_moves) for move in rbc_legal_move_requests(board)])
+        self.memo_calc_set(board, list(rbc_legal_move_requests(board)), -op_score, pseudo_legal_moves)
 
-    def memo_calc_set(self, requests):
+    def memo_calc_set(self, board, moves, prev_turn_score, pseudo_legal_moves):
         """Handler for requested scores. Filters for unique requests, then gets cached or calculated results."""
+        if pseudo_legal_moves is None:
+            pseudo_legal_moves = list(board.generate_pseudo_legal_moves())
 
-        filtered_requests = set()
+        filtered_moves = set()
         equivalent_requests = defaultdict(list)
-        for board, move, prev_turn_score, pseudo_legal_moves in requests:
-            if pseudo_legal_moves is None:
-                pseudo_legal_moves = list(board.generate_pseudo_legal_moves())
+        for move in moves:
             taken_move = simulate_move(board, move, pseudo_legal_moves) or PASS
             request_key = make_cache_key(board, move, prev_turn_score)
             result_key = make_cache_key(board, taken_move, prev_turn_score)
             equivalent_requests[result_key].append(request_key)
-            filtered_requests.add((board, taken_move, prev_turn_score, result_key))
+            filtered_moves.add((taken_move, result_key))
 
-        start = time()
+        risk_taker_results = self.risk_taker_module.get_high_risk_moves(
+            [board],
+            [e[0] for e in filtered_moves],
+            None,
+            self.sense_config.risk_taker_samples_per_move * len(filtered_moves),
+            disable_pbar=True
+        )
 
         results = {}
         num_new = 0
-        for board, move, prev_turn_score, key in filtered_requests:
-            results[key], is_new = self.memo_calc_score(board, move, prev_turn_score, key=key)
-            if is_new:
+        for move, key in filtered_moves:
+            if key in self.score_cache:
+                results[key] = self.score_cache[key]
+            else:
+                analytical_result, _ = self.memo_calc_score(board, move, prev_turn_score, key=key)
+                risk_taker_result = risk_taker_results[move]
+                results[key] = analytical_result + risk_taker_result * self.sense_config.risk_taker_coef
                 num_new += 1
+
 
         for result_key, request_keys in equivalent_requests.items():
             for request_key in request_keys:
@@ -260,7 +274,7 @@ class Zubat(StrangeFish):
         phase_end_time = start_time + time_for_phase
         board_sample = self.boards & self.boards_in_cache
         num_precomputed = len(board_sample)
-        with tqdm(desc="Computing move scores", unit="boards", disable=self.rc_disable_pbar, total=len(self.boards)) as pbar:
+        with tqdm(desc="Zubat: Computing move scores for sense", unit="boards", disable=self.rc_disable_pbar, total=len(self.boards)) as pbar:
             pbar.update(num_precomputed)
             for priority in sorted(self.board_sample_priority.keys(), reverse=True):
                 priority_boards = self.boards & self.board_sample_priority[priority]
@@ -292,7 +306,7 @@ class Zubat(StrangeFish):
         move_scores = np.zeros([len(moves), len(board_sample)])
 
         for num_board, board in enumerate(tqdm(board_sample, disable=self.rc_disable_pbar,
-                                               desc="Sense+Move outcome evaluation", unit="boards")):
+                                               desc="Zubat: Sense+Move outcome evaluation", unit="boards")):
 
             op_score = self.score_cache[make_cache_key(board)]
 
@@ -353,7 +367,7 @@ class Zubat(StrangeFish):
         post_sense_expected_outcome = {}
         post_sense_outcome_variance = {}
         for square in tqdm(valid_sense_squares, disable=self.rc_disable_pbar,
-                           desc="Evaluating sense options", unit="squares"):
+                           desc="Zubat: Evaluating sense options", unit="squares"):
             possible_results = set(sense_results[square].values())
             possible_outcomes = []
             outcome_weights = []
@@ -506,7 +520,7 @@ class Zubat(StrangeFish):
         moves = list(analytical_results.keys())
 
         gamble_results = self.risk_taker_module.get_high_risk_moves(
-            tuple(self.boards), moves, self.allocate_time(seconds_left)  # TODO: time allocation
+            tuple(self.boards), moves, self.allocate_time(seconds_left) * self.time_config.time_for_risk
         )
 
         results = {
@@ -542,11 +556,9 @@ class Zubat(StrangeFish):
 
     def allocate_time(self, seconds_left: float, fraction_turn_passed: float = 0):
         """Determine how much of the remaining time should be spent on (the rest of) the current turn."""
-        # TODO: improve, split time among modules?
-        return 10
-        # turns_left = self.time_config.turns_to_plan_for - fraction_turn_passed  # account for previous parts of turn
-        # equal_time_split = seconds_left / turns_left
-        # return min(max(equal_time_split, self.time_config.min_time_for_turn), self.time_config.max_time_for_turn)
+        turns_left = self.time_config.turns_to_plan_for - fraction_turn_passed  # account for previous parts of turn
+        equal_time_split = seconds_left / turns_left
+        return min(max(equal_time_split, self.time_config.min_time_for_turn), self.time_config.max_time_for_turn)
 
     def analytical_strategy(self, moves: List[chess.Move], seconds_left: float):
         """
@@ -566,7 +578,7 @@ class Zubat(StrangeFish):
         #     self.last_ditch_plan()
 
         # Allocate remaining time and use that to determine the sample_size for this turn
-        time_for_phase = self.allocate_time(seconds_left)
+        time_for_phase = self.allocate_time(seconds_left) * self.time_config.time_for_move
         # time_for_turn = self.allocate_time(seconds_left)
         # if self.extra_move_time:
         #     time_for_phase = time_for_turn
@@ -582,7 +594,7 @@ class Zubat(StrangeFish):
         valid_move_requests = set()
         all_maps_to_taken_move = {}
         all_maps_from_taken_move = {}
-        for board in tqdm(self.boards, desc="Writing move maps", unit="boards", disable=self.rc_disable_pbar):
+        for board in tqdm(self.boards, desc="Zubat: Writing move maps", unit="boards", disable=self.rc_disable_pbar):
             legal_moves = set(rbc_legal_moves(board))
             valid_move_requests |= legal_moves
             map_to_taken_move = {}
@@ -607,9 +619,9 @@ class Zubat(StrangeFish):
         # Initialize move score estimates and populate with any pre-computed scores
         move_scores = defaultdict(RunningEst)
         boards_to_sample = {move: set() for move in moves}
-        for board in tqdm(self.boards, desc="Reading pre-computed move scores", unit="boards", disable=self.rc_disable_pbar):
+        for board in tqdm(self.boards, desc="Zubat: Reading pre-computed move scores", unit="boards", disable=self.rc_disable_pbar):
             try:
-                score_before_move = self.score_cache[make_cache_key(board)]
+                score_before_move = self.analytical_score_cache[make_cache_key(board)]
             except KeyError:
                 for move in moves:
                     boards_to_sample[move].add(board)
@@ -617,7 +629,7 @@ class Zubat(StrangeFish):
                 # weight = self.weight_board_probability(score_before_move)
                 for taken_move, requested_moves in all_maps_from_taken_move[board].items():
                     try:
-                        score = self.score_cache[make_cache_key(board, taken_move, -score_before_move)]
+                        score = self.analytical_score_cache[make_cache_key(board, taken_move, -score_before_move)]
                     except KeyError:
                         for move in requested_moves:
                             boards_to_sample[move].add(board)
@@ -732,8 +744,8 @@ class Zubat(StrangeFish):
         """Memoized calculation of the score associated with one move on one board"""
         if key is None:
             key = make_cache_key(board, simulate_move(board, move) or PASS, prev_turn_score)
-        if key in self.score_cache:
-            return self.score_cache[key], False
+        if key in self.analytical_score_cache:
+            return self.analytical_score_cache[key], False
 
         score = calculate_score(
             board=board,
@@ -743,6 +755,7 @@ class Zubat(StrangeFish):
             score_config=self.score_config,
             is_op_turn=prev_turn_score is None,
         )
+        self.analytical_score_cache[key] = score
         return score, True
 
     def handle_move_result(self, requested_move: Optional[chess.Move], taken_move: Optional[chess.Move],

@@ -13,26 +13,31 @@ from strangefish.utilities.rbc_move_score import ScoreConfig, calculate_score, s
 
 
 class RiskTakerModule:
-    def __init__(self, engine, score_cache, score_config=ScoreConfig(), depth=1, samples=3000, recapture_weight=10, exploration_factor=200, rc_disable_pbar=False):
+    def __init__(self, engine, score_cache, logger, score_config=ScoreConfig(), depth=1, samples=3000, recapture_weight=10, exploration_factor=200, rc_disable_pbar=False):
         self.exploration_factor = exploration_factor
         self.score_cache = score_cache
         self.engine = engine
         self.rc_disable_pbar = rc_disable_pbar
         self.recapture_weight = recapture_weight
-        self.samples = samples
+        self.default_samples = samples
         self.depth = depth
         self.score_config = score_config
+        self.logger = logger
 
     def get_high_risk_moves(
             self,
             boards: Tuple[chess.Board],
             moves: List[chess.Move],
             time_limit=None,
+            samples=None,
+            disable_pbar=False
     ):
+        if samples is None:
+            samples = self.default_samples
         results = {move: 0 for move in moves}
         num_samples = defaultdict(int)
         start_time = time()
-        for total in tqdm(range(self.samples), desc="Sampling for gambles", unit="Samples", disable=self.rc_disable_pbar):
+        for total in tqdm(range(samples), desc="Zubat: Sampling for gambles", unit="Samples", disable=self.rc_disable_pbar or disable_pbar):
             try:
                 board = fast_copy_board(random.choice(boards))
                 considered_move: chess.Move = max(
@@ -77,7 +82,7 @@ class RiskTakerModule:
                     if board.king(board.turn) is None:
                         break
                 if time_limit is not None and time() - start_time > time_limit:
-                    print('Time limit for gamble sampling exceeded')
+                    self.logger.debug('Zubat: Time limit for gamble sampling exceeded')
                     break
 
             except Exception as e:
