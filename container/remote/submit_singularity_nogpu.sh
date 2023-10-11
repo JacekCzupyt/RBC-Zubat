@@ -18,15 +18,15 @@ echo "SLURM_JOB_ID: ${SLURM_JOB_ID}"
 echo "CUDA_VISIBLE_DEVICES: ${CUDA_VISIBLE_DEVICES}"
 echo "singularity version: $(singularity version)"
 echo "image: ${1}"
-echo "Training command: python ${2}" "${@:3}"
-echo "Run command ${4} times"
-for i in $(seq 1 ${4})
+echo "Training command: python ${3}" "${@:4}"
+echo "Run command ${2} times"
+for i in $(seq 1 ${2})
 do
   singularity run \
     --nv \
     --env CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES}",STOCKFISH_EXECUTABLE=/home2/faculty/jczupyt/projects/stockfish/stockfish-ubuntu-x86-64-avx2 \
     --bind /home2/faculty/jczupyt/projects/zubat:/app:ro \
     "${1}" \
-    python "${2}" "${@:3}"
+    python "${3}" "${@:4}"
   date
 done
