@@ -130,6 +130,8 @@ def our_play_remote_game(server_url, game_id, auth, player: Player):
 
     player.handle_game_end(winner_color, win_reason, game_history)
 
+    game_history.save(f'game_logs/ranked_games/{game_id}/game_{game_id}.log')
+
     return winner_color, win_reason, game_history
 
 
@@ -144,7 +146,13 @@ def accept_invitation_and_play(server_url, auth, invitation_id, finished):
     game_id = server.accept_invitation(invitation_id)
     logger.info("Invitation %d accepted. Playing game %d.", invitation_id, game_id)
 
-    player = Zubat(uncertainty_model=uncertainty_lstm_1('uncertainty_model/uncertainty_lstm_3/weights'), game_id=game_id)
+    player = Zubat(uncertainty_model=uncertainty_lstm_1(
+        'uncertainty_model/uncertainty_lstm_3/weights'),
+        game_id=game_id,
+        uncertainty_multiplier=150,
+        risk_taker_multiplier=0.5,
+        log_dir=f"game_logs/ranked_games/{game_id}"
+    )
 
     try:
         our_play_remote_game(server_url, game_id, auth, player)
