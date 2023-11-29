@@ -130,109 +130,51 @@ def our_play_remote_game(server_url, game_id, auth, player: Player):
 
     player.handle_game_end(winner_color, win_reason, game_history)
 
-    game_history.save(f'game_logs/ranked_games/{game_id}/game_{game_id}.log')
-
     return winner_color, win_reason, game_history
 
 
-def accept_invitation_and_play(server_url, auth, invitation_id, finished):
+def play_remote_game(server_url, auth, opponent, color, batch, bot_opts):
     # make sure this process doesn't react to the first interrupt signal
     signal.signal(signal.SIGINT, ignore_one_term)
 
     logger = logging.getLogger("rc-connect")
 
-    logger.debug("Accepting invitation %d.", invitation_id)
     server = RBCServer(server_url, auth)
-    game_id = server.accept_invitation(invitation_id)
-    logger.info("Invitation %d accepted. Playing game %d.", invitation_id, game_id)
+
+    # send invitation
+    game_id = server.send_invitation(opponent, color)
+
+    logger.info("Playing game %d.", game_id)
 
     player = Zubat(uncertainty_model=uncertainty_lstm_1(
         'uncertainty_model/uncertainty_lstm_3/weights'),
         game_id=game_id,
-        uncertainty_multiplier=75,
-        risk_taker_multiplier=0.125,
-        risk_taker_state_offset=0,
-        risk_taker_state_weight=0,
-        log_dir=f"game_logs/ranked_games/{game_id}"
+        log_dir=f"game_logs/unranked_games/{batch}/{opponent}/{game_id}",
+        **bot_opts
     )
 
     try:
-        our_play_remote_game(server_url, game_id, auth, player)
+        _, _, game_history = our_play_remote_game(server_url, game_id, auth, player)
         logger.debug("Finished game %d.", game_id)
+        game_history.save(f'game_logs/unranked_games/{batch}/{opponent}/{game_id}/game_{game_id}.log')
     except:
         logging.getLogger(f"game-{game_id}").exception("Fatal error in game %d.", game_id)
         traceback.print_exc()
         server.error_resign(game_id)
         player.handle_game_end(None, None, None)
         logger.critical("Game %d closed on account of error.", game_id)
-    finally:
-        server.finish_invitation(invitation_id)
-        finished.value = True
-        logger.debug("Game %d ended. Invitation %d closed.", game_id, invitation_id)
+    # finally:
+        # server.finish_invitation(invitation_id)
+        # logger.debug("Game %d ended. Invitation %d closed.", game_id, invitation_id)
 
 
-def listen_for_invitations(server, max_concurrent_games, limit_games):
+def send_invitations(server, limit_games, opponent, color, batch, bot_opts):
     logger = logging.getLogger("rc-connect")
 
-    connected = False
-    process_by_invitation = {}
-    finished_by_invitation = {}
-    num_games_joined = 0
-    disconnect_signalled = False
-    while True:
+    for _ in range(limit_games):
         try:
-            # get unaccepted invitations
-            invitations = server.get_invitations()
-
-            # set max games on server if this is the first successful connection after being disconnected
-            if not connected:
-                logger.info("Connected successfully to server!")
-                connected = True
-                server.set_max_games(max_concurrent_games)
-
-            # filter out finished processes
-            finished_invitations = []
-            for invitation in process_by_invitation.keys():
-                if not process_by_invitation[invitation].is_alive() or finished_by_invitation[invitation].value:
-                    finished_invitations.append(invitation)
-            for invitation in finished_invitations:
-                logger.info(f"Terminating process for invitation {invitation}"
-                            f" (exit code: {process_by_invitation[invitation].exitcode})")
-                process_by_invitation[invitation].terminate()
-                del process_by_invitation[invitation]
-                del finished_by_invitation[invitation]
-
-            # Optionally, disconnect after N games joined, and exit the script when all game completed
-            if limit_games is not None and num_games_joined >= limit_games:
-                if not disconnect_signalled:
-                    server.set_max_games(0)
-                    server.set_ranked(False)
-                    disconnect_signalled = True
-                elif not process_by_invitation and not invitations:
-                    return
-
-            # accept invitations until we have #max_concurrent_games processes alive
-            for invitation in invitations:
-                # only accept the invitation if we have room and the invite doesn't have a process already
-                if invitation not in process_by_invitation:
-                    logger.debug(f"Received invitation {invitation}.")
-
-                    if len(process_by_invitation) < max_concurrent_games:
-                        # start the process for playing a game
-                        finished = multiprocessing.Value("b", False)
-                        process = multiprocessing.Process(
-                            target=accept_invitation_and_play,
-                            args=(server.server_url, server.session.auth, invitation, finished))
-                        process.start()
-                        num_games_joined += 1
-
-                        # store the process so we can check when it finishes
-                        process_by_invitation[invitation] = process
-                        finished_by_invitation[invitation] = finished
-                    else:
-                        logger.info(f"Not enough game slots to play invitation {invitation}.")
-                        server.set_ranked(False)
-                        max_concurrent_games += 1
+            # play
+            play_remote_game(server.server_url, server.session.auth, opponent, color, batch, bot_opts)
 
         except requests.RequestException as e:
             connected = False
@@ -245,27 +187,50 @@ def listen_for_invitations(server, max_concurrent_games, limit_games):
         time.sleep(5)
 
 
+
 @click.command()
 @click.argument("username")
 @click.argument("password")
 @click.option("--server-url", "server_url", default="https://rbc.jhuapl.edu", help="URL of the server.")
-@click.option("--max-concurrent-games", "max_concurrent_games", type=int, default=1, help="Maximum games to play at once.")
 @click.option("--limit-games", "limit_games", type=int, default=None, help="Optional limit to number of games played.")
-@click.option("--ranked", "ranked", type=bool, default=False, help="Play for leaderboard ELO.")
-@click.option("--keep-version", "keep_version", type=bool, default=True, help="Keep existing leaderboard version num.")
-def main(username, password, server_url, max_concurrent_games, limit_games, ranked, keep_version):
+@click.option("--challenge", "challenge", type=str, default=None, help="Player to challenge")
+@click.option("--color", "color", type=str, default=None, help="Color to play as")
+@click.option("--batch", "batch", type=str, default=int(time.time()), help="Color to play as")
+@click.option("--uncertainty_multiplier", "uncertainty_multiplier", type=float, default=0)
+@click.option("--risk_taker_multiplier", "risk_taker_multiplier", type=float, default=0)
+@click.option("--risk_taker_state_offset", "risk_taker_state_offset", type=float, default=0)
+@click.option("--risk_taker_state_weight", "risk_taker_state_weight", type=float, default=0)
+def main(
+    username,
+    password,
+    server_url,
+    limit_games,
+    challenge,
+    color,
+    batch,
+    uncertainty_multiplier,
+    risk_taker_multiplier,
+    risk_taker_state_offset,
+    risk_taker_state_weight
+):
+    bot_opts = {
+        "uncertainty_multiplier": uncertainty_multiplier,
+        "risk_taker_multiplier": risk_taker_multiplier,
+        "risk_taker_state_offset": risk_taker_state_offset,
+        "risk_taker_state_weight": risk_taker_state_weight,
+    }
+
     logger = logging.getLogger("rc-connect")
     logger.setLevel(logging.INFO)
     logger.addHandler(create_stream_handler())
-    logger.addHandler(create_file_handler(f"rc_connect_{datetime.now().strftime('%Y_%m_%d_%H_%M_%S')}.log"))
+    logger.addHandler(create_file_handler(f"connection_logs/rc_connect_{datetime.now().strftime('%Y_%m_%d_%H_%M_%S')}.log"))
 
     logger.debug(
         f"Running modified_rc_connect to play RBC games online."
         f" {server_url=}"
-        f" {max_concurrent_games=}"
         f" {limit_games=}"
-        f" {ranked=}"
-        f" {keep_version=}"
+        f" {challenge=}"
+        f" {color=}"
     )
 
     auth = username, password
@@ -284,14 +249,9 @@ def main(username, password, server_url, max_concurrent_games, limit_games, rank
     signal.signal(signal.SIGINT, handle_term)
 
     # tell the server whether we want to do ranked matches or not
-    if ranked:
-        if not keep_version:
-            server.increment_version()
-        server.set_ranked(True)
-    else:
-        server.set_ranked(False)
+    server.set_ranked(False)
 
-    listen_for_invitations(server, max_concurrent_games, limit_games)
+    send_invitations(server, limit_games, challenge, color, batch, bot_opts)
 
 
 if __name__ == "__main__":

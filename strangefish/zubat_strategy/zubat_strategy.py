@@ -63,7 +63,8 @@ class Zubat(StrangeFish):
             move_vote_value=100,
             uncertainty_multiplier=200,
             risk_taker_multiplier=1,
-            risk_taker_state_weight=200,
+            risk_taker_state_weight=1/100,
+            risk_taker_state_offset=-400,
 
             log_move_scores=True,
             log_dir="game_logs/move_score_logs",
@@ -98,6 +99,7 @@ class Zubat(StrangeFish):
         self.uncertainty_multiplier = uncertainty_multiplier
         self.risk_taker_multiplier = risk_taker_multiplier
         self.risk_taker_state_weight = risk_taker_state_weight
+        self.risk_taker_state_offset = risk_taker_state_offset
 
         self.network_input_sequence = []
 
@@ -535,7 +537,7 @@ class Zubat(StrangeFish):
                 analytical_results[move] +
                 (
                     gamble_results[move] * uncertainty_results[move] * self.risk_taker_multiplier /
-                    (1+np.exp(best_analytical/self.risk_taker_state_weight))
+                    (1 + np.exp((best_analytical + self.risk_taker_state_offset) * self.risk_taker_state_weight))
                 )
             for move in moves
         }

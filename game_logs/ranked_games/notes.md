@@ -1,0 +1,37 @@
+- batch 4
+  - v17
+  - risk - 0
+  - UM - 0
+- batch 10
+  - v22
+  - risk - 1
+  - UM - 75
+- batch 11
+  - v23
+  - risk - 0.25
+  - UM - 75
+- batch 12
+  - v24
+  - risk - 0.125
+  - UM - 75
+- batch 13
+  - v25
+  - risk - 0.25
+  - UM - 75
+  - risk_modifier - x/200
+- batch 14
+  - v26
+  - risk - 0.25
+  - UM - 75
+  - risk_modifier - (x-400)/200
+- batch 15
+  - v27
+  - risk - 0.25
+  - UM - 75
+  - risk_modifier - (x+400)/200
+- batch 16
+  - v28
+  - risk - 0.25
+  - UM - 75
+  - risk_modifier - (x+400)*0
+  - equivalent to batch 12
