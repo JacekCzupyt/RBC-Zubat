@@ -170,21 +170,28 @@ def play_remote_game(server_url, auth, opponent, color, batch, bot_opts):
 
 def send_invitations(server, limit_games, opponent, color, batch, bot_opts):
     logger = logging.getLogger("rc-connect")
+    i = 0
+    t0 = 2
+    t = t0
 
-    for _ in range(limit_games):
+    while i < limit_games:
         try:
             # play
             play_remote_game(server.server_url, server.session.auth, opponent, color, batch, bot_opts)
-
+            i+=1
+            t=t0
         except requests.RequestException as e:
-            connected = False
             logger.exception("Failed to connect to server")
             print(e)
+            t *= 2
         except Exception:
             logger.exception("Error in invitation processing: ")
             traceback.print_exc()
+            t *= 2
 
-        time.sleep(5)
+        if t >= t0 * 2**10:
+            break
+        time.sleep(t)
 
 
 
