@@ -149,8 +149,8 @@ def accept_invitation_and_play(server_url, auth, invitation_id, finished):
     player = Zubat(uncertainty_model=uncertainty_lstm_1(
         'uncertainty_model/uncertainty_lstm_3/weights'),
         game_id=game_id,
-        uncertainty_multiplier=75,
-        risk_taker_multiplier=0.125,
+        uncertainty_multiplier=100,
+        risk_taker_multiplier=0.25,
         risk_taker_state_offset=0,
         risk_taker_state_weight=0,
         log_dir=f"game_logs/ranked_games/{game_id}"

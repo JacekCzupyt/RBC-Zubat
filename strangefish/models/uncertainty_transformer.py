@@ -63,5 +63,40 @@ def uncertainty_transformer_1(num_heads=2, ff_dim=64, dropout=0.1, weights_path=
     return model
 
 
+def uncertainty_transformer_vis(num_heads=2, ff_dim=64, dropout=0.1, weights_path=None):
+
+    input_dim = (None, 8, 8, 37)
+
+    # Input data type
+    dtype = 'float32'
+
+    # ---- Network model ----
+    input_data = keras.layers.Input(name='input', shape=input_dim, dtype=dtype)
+
+    x = keras.layers.Masking(mask_value=-1.0, name="masking")(input_data)
+
+    input_len = np.product(input_dim[1:])
+
+    x = keras.layers.Reshape((-1, input_len), name='reshape')(x)
+
+    x = TransformerBlock(input_len, num_heads, ff_dim, dropout)(x)
+
+    x = keras.layers.Dropout(dropout, name="dropout_1")(x)
+
+    x = keras.layers.Dense(units=64, activation='relu', name='dense')(x)
+    x = keras.layers.Dropout(dropout, name='dropout_2')(x)
+
+    y_pred = keras.layers.Dense(1, name='output', activation='sigmoid')(x)
+
+    model = keras.models.Model(inputs=input_data, outputs=y_pred)
+
+    model.compile(loss=masked_squared_error, optimizer='adam')
+
+    if weights_path is not None:
+        model.load_weights(weights_path)
+
+    return model
+
+
 if __name__ == '__main__':
     model = uncertainty_transformer_1()
