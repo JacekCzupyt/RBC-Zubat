@@ -71,11 +71,18 @@ def create_stream_handler(log_level=logging.INFO):
     return stdout_handler
 
 
-def create_file_handler(filename: str, max_bytes: int = None):
+def create_file_handler(filename: str, max_bytes: int = None, log_dir=None):
+    if log_dir is None:
+        log_dir = LOG_DIR
+
+    path = os.path.join(log_dir, filename)
+    if not os.path.exists(os.path.dirname(path)):
+        os.makedirs(os.path.dirname(path))
+
     if max_bytes is None:
-        file_handler = logging.FileHandler(os.path.join(LOG_DIR, filename), mode="w")
+        file_handler = logging.FileHandler(path, mode="w")
     else:
-        file_handler = logging.handlers.RotatingFileHandler(os.path.join(LOG_DIR, filename), "a", max_bytes, 1)
+        file_handler = logging.handlers.RotatingFileHandler(path, "a", max_bytes, 1)
     file_handler.setFormatter(verbose_format)
     file_handler.setLevel(logging.DEBUG)
     return file_handler

@@ -43,8 +43,7 @@ RC_DISABLE_PBAR = os.getenv('RC_DISABLE_PBAR', 'false').lower() == 'true'  # Fla
 WAIT_LOOP_RATE_LIMIT = 2  # minimum seconds spent looping in self.while_we_wait()
 
 # Parameters for switching to the emergency backup plan
-# TODO: return to 1000
-BOARD_SET_LIMIT = 200_000  # number of boards in set at which we stop processing and store for later
+BOARD_SET_LIMIT = 1000  # number of boards in set at which we stop processing and store for later
 REPOPULATE_BOARD_SET_TARGET = 30  # number of boards at which we stop repopulating from stored states
 
 
@@ -66,6 +65,8 @@ class StrangeFish(Player):
         stream_log_level=logging.INFO,
         game_id=None,
         rc_disable_pbar=RC_DISABLE_PBAR,
+        log_dir=None,
+        log_file=None
     ):
         """
         Set up the MHT core of StrangeFish.
@@ -93,7 +94,7 @@ class StrangeFish(Player):
         game_log.setLevel(logging.DEBUG)
         game_log.addHandler(create_stream_handler(stream_log_level))
         if log_to_file:
-            game_log.addHandler(create_file_handler(f"game_{game_id}.log"))
+            game_log.addHandler(create_file_handler(log_file or f"{game_id}.log", log_dir=log_dir))
 
         self.logger = logging.getLogger(f"game-{game_id}.agent")
         self.logger.setLevel(logging.DEBUG)
@@ -102,7 +103,7 @@ class StrangeFish(Player):
     def handle_game_start(self, color: Color, board: chess.Board, opponent_name: str):
         color_name = chess.COLOR_NAMES[color]
 
-        self.logger.info(f"Starting a new game as {color_name} against {opponent_name}.")
+        self.logger.info(f"{self.__class__.__name__} starting a new game as {color_name} against {opponent_name}.")
         self.boards = {board}
         self.board_sample_priority = defaultdict(set)
         self.stored_old_boards = BoardSetBacklog()
@@ -110,6 +111,9 @@ class StrangeFish(Player):
         self.turn_num = 0
         self.num_boards_at_end_of_turn = 1
         self.projected_end_time = time() + 900
+
+        if color:
+            self.board_sample_priority[0] = {board}
 
     def handle_opponent_move_result(self, captured_my_piece: bool, capture_square: Optional[Square]):
         self.turn_num += 1

@@ -23,6 +23,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 """
 
 import logging
+import os
 import pickle
 import random
 from collections import defaultdict
@@ -85,6 +86,8 @@ class SenseConfig:
     worst_outcome_coef: float = 0.2  # The scaling factor for sensing to maximize the worst turn outcome
     outcome_variance_coef: float = -0.3  # The scaling factor for sensing based on turn outcome variance
     score_variance_coef: float = 0.15  # The scaling factor for sensing based on move score variance
+    risk_taker_samples_per_move: int = 3  # The number of samples per move for the risk-taker monte carlo simulation
+    risk_taker_coef: float = 0.4  # How important is the risk-taker result during sense selection
 
 
 @dataclass
@@ -106,6 +109,7 @@ class TimeConfig:
     max_time_for_turn: float = 40.0  # maximum time to allocate for a turn
     time_for_sense: float = 0.7  # fraction of turn spent in choose_sense
     time_for_move: float = 0.3  # fraction of turn spent in choose_move
+    time_for_risk: float = 0.0
     calc_time_per_move: float = 0.005  # starting time estimate for move score calculation
 
 
@@ -174,6 +178,10 @@ class StrangeFish2(StrangeFish):
         min_board_weight: float = 0.02,
 
         while_we_wait_extension: bool = True,
+
+        log_dir=None,
+        log_file=None,
+        engile_log_file=None
     ):
         """
         Constructs an instance of the StrangeFish2 agent.
@@ -195,13 +203,15 @@ class StrangeFish2(StrangeFish):
 
         :param while_we_wait_extension: A bool that toggles the scoring of boards that could be reached two turns ahead
         """
-        super().__init__(log_to_file=log_to_file, game_id=game_id, rc_disable_pbar=rc_disable_pbar)
+        super().__init__(log_to_file=log_to_file, game_id=game_id, rc_disable_pbar=rc_disable_pbar, log_dir=log_dir,
+                         log_file=log_file)
 
         self.logger.debug("Creating new instance of StrangeFish2.")
 
         engine_logger = logging.getLogger("chess.engine")
         engine_logger.setLevel(logging.DEBUG)
-        file_handler = create_file_handler(f"engine_logs/game_{game_id}_engine.log", 10_000)
+        file_handler = create_file_handler(engile_log_file or f"engine_logs/game_{game_id}_engine.log", 10_000,
+                                           log_dir=log_dir or None)
         engine_logger.addHandler(file_handler)
         engine_logger.debug("File handler added to chess.engine logs")
 
@@ -910,6 +920,7 @@ class StrangeFish2(StrangeFish):
 
                 # Then iterate through boards in descending priority to get one for eval
                 needed_boards_for_eval = boards_to_sample[move_to_eval]
+
                 for priority in sorted_priorities:
                     priority_boards = needed_boards_for_eval & self.board_sample_priority[priority]
                     if priority_boards:

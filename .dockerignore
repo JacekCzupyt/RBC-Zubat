@@ -1,0 +1,16 @@
+.pytest_cache
+.idea
+*.pyc
+output_file
+/tempbots/
+*.log
+*.log.*
+venv
+.ipynb_checkpoints
+test_cases
+score_cache.*
+*.prof
+endgame_tables/
+/game_logs/historical_games/
+/game_logs/historical_games_extended_backup/
+.git

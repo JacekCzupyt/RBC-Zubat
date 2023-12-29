@@ -10,7 +10,6 @@ output_file
 .ipynb_checkpoints
 stockfish-*
 *.csv
-*.txt
 gameLogs/
 test_cases
 score_cache.*

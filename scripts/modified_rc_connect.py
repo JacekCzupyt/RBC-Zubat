@@ -37,9 +37,11 @@ import chess
 from reconchess import Player, RemoteGame, play_turn, ChessJSONDecoder, ChessJSONEncoder
 from reconchess.scripts.rc_connect import RBCServer, check_package_version
 
+from strangefish.models.uncertainty_lstm import uncertainty_lstm_1
 from strangefish.strangefish_strategy import StrangeFish2
 from strangefish.utilities import ignore_one_term
 from strangefish.utilities.player_logging import create_file_handler, create_stream_handler
+from strangefish.zubat_strategy.zubat_strategy import Zubat
 
 
 class OurRemoteGame(RemoteGame):
@@ -128,6 +130,8 @@ def our_play_remote_game(server_url, game_id, auth, player: Player):
 
     player.handle_game_end(winner_color, win_reason, game_history)
 
+    game_history.save(f'game_logs/ranked_games/{game_id}/game_{game_id}.log')
+
     return winner_color, win_reason, game_history
 
 
@@ -142,7 +146,15 @@ def accept_invitation_and_play(server_url, auth, invitation_id, finished):
     game_id = server.accept_invitation(invitation_id)
     logger.info("Invitation %d accepted. Playing game %d.", invitation_id, game_id)
 
-    player = StrangeFish2(game_id=game_id)
+    player = Zubat(uncertainty_model=uncertainty_lstm_1(
+        'uncertainty_model/uncertainty_lstm_3/weights'),
+        game_id=game_id,
+        uncertainty_multiplier=100,
+        risk_taker_multiplier=0.25,
+        risk_taker_state_offset=0,
+        risk_taker_state_weight=0,
+        log_dir=f"game_logs/ranked_games/{game_id}"
+    )
 
     try:
         our_play_remote_game(server_url, game_id, auth, player)
@@ -242,9 +254,8 @@ def listen_for_invitations(server, max_concurrent_games, limit_games):
 @click.option("--ranked", "ranked", type=bool, default=False, help="Play for leaderboard ELO.")
 @click.option("--keep-version", "keep_version", type=bool, default=True, help="Keep existing leaderboard version num.")
 def main(username, password, server_url, max_concurrent_games, limit_games, ranked, keep_version):
-
     logger = logging.getLogger("rc-connect")
-    logger.setLevel(logging.DEBUG)
+    logger.setLevel(logging.INFO)
     logger.addHandler(create_stream_handler())
     logger.addHandler(create_file_handler(f"rc_connect_{datetime.now().strftime('%Y_%m_%d_%H_%M_%S')}.log"))
 
