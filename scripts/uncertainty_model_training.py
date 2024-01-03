@@ -11,6 +11,8 @@ from strangefish.models.uncertainty_lstm import uncertainty_lstm_1
 
 
 if __name__ == '__main__':
+    os.chdir('..')
+
     match sys.argv[1]:
         case 'lstm':
             model = uncertainty_lstm_1()

@@ -88,7 +88,6 @@ class RiskTakerModule:
             except Exception as e:
                 raise e
 
-        # TODO: what if no samples?
         # results = {move: np.nan_to_num(np.mean(scores), nan=-1000) for move, scores in results.items()}
         return results
 
